@@ -1,0 +1,406 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <Arduino_JSON.h>
+#include <ESPmDNS.h>
+#include <SPIFFS.h>
+
+#define ENA   12          // Enable/speed motors Right        GPIO14(D5)
+#define ENB   13          // Enable/speed motors Left         GPIO12(D6)
+#define IN_1  14          // L298N in1 motors Rightx          GPIO15(D8)
+#define IN_2  27          // L298N in2 motors Right           GPIO13(D7)
+#define IN_3  26           // L298N in3 motors Left            GPIO2(D4)
+#define IN_4  25           // L298N in4 motors Left            GPIO0(D3)
+
+int speedCar = 4095;         // rage: 0 - 4095
+int status = 0;
+
+String incoMessage;
+String command;
+String speed;
+
+const char* ssid = "Eternity";
+const char* password = "MaxMaster@#11";
+
+unsigned long lastTime = 0;
+unsigned long timerDelay = 1500;
+
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
+
+void moveForward(){ 
+
+      digitalWrite(IN_1, LOW);
+      digitalWrite(IN_2, HIGH);
+      analogWrite(ENA, speedCar);
+
+      digitalWrite(IN_3, LOW);
+      digitalWrite(IN_4, HIGH);
+      analogWrite(ENB, speedCar);
+  }
+
+void moveBackward(){ 
+
+      digitalWrite(IN_1, HIGH);
+      digitalWrite(IN_2, LOW);
+      analogWrite(ENA, speedCar);
+
+      digitalWrite(IN_3, HIGH);
+      digitalWrite(IN_4, LOW);
+      analogWrite(ENB, speedCar);
+  }
+
+void moveRight(){ 
+
+      digitalWrite(IN_1, HIGH);
+      digitalWrite(IN_2, LOW);
+      analogWrite(ENA, speedCar);
+
+      digitalWrite(IN_3, LOW);
+      digitalWrite(IN_4, HIGH);
+      analogWrite(ENB, speedCar);
+  }
+
+void moveLeft(){
+
+      digitalWrite(IN_1, LOW);
+      digitalWrite(IN_2, HIGH);
+      analogWrite(ENA, speedCar);
+
+      digitalWrite(IN_3, HIGH);
+      digitalWrite(IN_4, LOW);
+      analogWrite(ENB, speedCar);
+  }
+
+void moveStop(){  
+
+      digitalWrite(IN_1, LOW);
+      digitalWrite(IN_2, LOW);
+      analogWrite(ENA, speedCar);
+
+      digitalWrite(IN_3, LOW);
+      digitalWrite(IN_4, LOW);
+      analogWrite(ENB, speedCar);
+ }
+
+void notifyClients() {
+  ws.textAll(String(status));
+}
+
+void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
+  AwsFrameInfo* info = (AwsFrameInfo*)arg;
+
+  if (info->final && info->index == 0) {
+    JSONVar commandData = JSON.parse((char*)data);
+    const char* recievedCommand = commandData["command"];
+    const char* recievedData = commandData["data"];
+    if (recievedCommand && recievedData) {
+      command = recievedCommand;
+      speed = recievedData;
+      Serial.print("Received command: ");
+      Serial.println(command);
+      Serial.print("Received data: ");
+      Serial.println(speed);
+    }
+  }
+}
+
+void processReceivedMessage(const String& message) {
+  // Handle the received message here
+  Serial.println("Received message: " + message);
+}
+
+
+void onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len) {
+  switch (type) {
+    case WS_EVT_CONNECT:
+      Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+      notifyClients();
+      break;
+    case WS_EVT_DISCONNECT:
+      Serial.printf("WebSocket client #%u disconnected\n", client->id());
+      break;
+    case WS_EVT_DATA:
+      handleWebSocketMessage(arg, data, len);
+      // fun();
+      break;
+    case WS_EVT_PONG:
+    case WS_EVT_ERROR:
+      break;
+  }
+}
+
+void initWebSocket() {
+  ws.onEvent(onEvent);
+  server.addHandler(&ws);
+}
+
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UV Controller</title>
+    <style>
+        body {
+            margin-top: auto;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            text-align: center;
+        }
+        .control-button {
+            font-size: 80px;
+            padding: 5px 15px;
+            border: none;
+            border-radius: 10px;
+            background-color: #3498db; /* A blue color for buttons */
+            color: #262e28; /* White text for better contrast */
+            cursor: pointer;
+            margin: 0px;
+            transition: background-color 0.2s ease-in-out; /* Smooth transition on hover */
+        }
+        #moveLeft {
+            margin-right: 5%;
+        }
+        .container {
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+            margin-top: 30px;
+            padding: 10px;
+            padding-top: 5px;
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        .slider-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center
+        }
+
+        .slider-label {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+
+        .slider {
+            width: 100%;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 20px;
+            border-radius: 10px;
+            background: #d3d3d3;
+            outline: none;
+            opacity: 0.7;
+            -webkit-transition: .2s;
+            transition: opacity .2s;
+        }
+
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: #3498db;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>UV Car Control interface</h1>
+    <section>
+        <button class="control-button" id="moveForward">🢁</button>
+    </section><br><br>
+    <div id="controls">
+        
+        <button style="margin-right: 200px;" class="control-button" id="moveLeft">🢀</button>
+
+        <button class="control-button" id="moveRight">🢂</button>
+    </div>
+    <br><br>
+    <section>
+        <button class="control-button" id="moveBackward">🢃</button>
+    </section>
+
+    <div class="container">
+        <div class="slider-container">
+            <label for="speedSlider" class="slider-label"><strong>Speed: </strong><span id="speedValue"><strong>4095</strong></span></label>
+            <input type="range" id="speedSlider" class="slider" min="0" max="4095" value="4095">
+        </div>
+    </div>
+
+
+    <script>
+        const comBtn = document.querySelectorAll('.control-button');
+        const sld = document.getElementById('speedSlider');
+        const spm = document.getElementById('speedValue');
+        let moveInterval;
+        let moveDirection = '';
+        let incoData;
+        let value = '';
+
+        var gateway = `ws://192.168.0.147/ws`;
+        var websocket;
+
+        window.addEventListener('load', onload);
+
+        function onload(event) {
+            initWebSocket();
+        }
+
+        function initWebSocket() {
+            console.log('Trying to open a WebSocket connection…');
+            websocket = new WebSocket(gateway);
+            websocket.onopen = onOpen;
+            websocket.onclose = onClose;
+            websocket.onmessage = onMessage;
+        }
+
+
+        function onOpen(event) {
+            console.log('Connection opened');
+        }
+
+        function onClose(event) {
+            console.log('Connection closed');
+            setTimeout(initWebSocket, 2000);
+        }
+        function handleText() {
+            incoData = event.data;
+            console.log("Data = "+incoData)
+        }
+        function onMessage(event) {
+            console.log(event.data);
+            incoData = event.data
+            handleText();
+        }
+
+        comBtn.forEach(button => {
+            button.addEventListener('mousedown', function(e) {
+                // Determine the direction based on the button's id
+                moveDirection = button.id;
+                console.log(`${moveDirection}`);
+                const commandData = {
+                    command: `${moveDirection}`,
+                    data: `${value}`
+                };
+                websocket.send(JSON.stringify(commandData));
+                
+                // Start moving in the determined direction
+                /*moveInterval = setInterval(() => {
+                    console.log(`${moveDirection}`);
+                    websocket.send(`${moveDirection}`);
+                }, 200); // You can adjust the interval as needed*/
+            });
+
+            button.addEventListener('mouseup', function(e) {
+                // Stop moving when any button is released
+                clearInterval(moveInterval);
+                console.log("moveStop");
+                websocket.send("moveStop");
+                moveDirection = 'moveStop';
+                const commandData = {
+                    command: `${moveDirection}`,
+                    data: `${value}`
+                };
+                websocket.send(JSON.stringify(commandData));
+            });
+
+            // Add hover effect
+            button.addEventListener('mouseenter', function(e) {
+                button.style.backgroundColor = '#2980b9'; // Darker blue on hover
+            });
+
+            button.addEventListener('mouseleave', function(e) {
+                button.style.backgroundColor = '#3498db'; // Restore original color on mouseout
+            });
+        });
+
+        sld.addEventListener('input', function() {
+            value = sld.value;
+            console.log(value);
+            spm.innerHTML = "<strong>" + value + "</strong>";
+            spm.style.color = "black";
+        });
+    </script>
+
+</body>
+</html>
+
+)rawliteral";
+const int relayPin = 26;
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  if (MDNS.begin("car")) {
+    Serial.println("Your mDNS server name is car.local/");
+  }
+  Serial.print("/nLocal IP: ");
+  Serial.print(WiFi.localIP());
+  Serial.println("\nSubnet Musk: ");
+  Serial.print(WiFi.subnetMask());
+  Serial.println("\nGateway IP: ");
+  Serial.print(WiFi.gatewayIP());
+  Serial.println("\nDNS 1: ");
+  Serial.print(WiFi.dnsIP(0));
+  Serial.println("\nDNS 2: ");
+  Serial.print(WiFi.dnsIP(1));
+
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send_P(200, "text/html", index_html);
+  });
+
+
+  initWebSocket();
+
+  server.begin();
+  pinMode(ENA, OUTPUT);
+  pinMode(ENB, OUTPUT);  
+  pinMode(IN_1, OUTPUT);
+  pinMode(IN_2, OUTPUT);
+  pinMode(IN_3, OUTPUT);
+  pinMode(IN_4, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
+}
+
+void loop() {
+  if (speed != "") {
+    int intSpeed = speed.toInt();
+    speedCar = intSpeed;
+  }
+  if (command == "moveForward") {
+    moveForward();
+    digitalWrite(LED_BUILTIN, HIGH);
+    
+  }
+  else if (command == "moveRight") {
+    moveRight();
+  }
+  else if (command == "moveLeft") {
+    moveLeft();
+  }
+  else if (command == "moveBackward") {
+    moveBackward();
+  }
+  else if (command == "moveStop") {
+    moveStop();
+    digitalWrite(LED_BUILTIN, LOW);
+  }
+  ws.cleanupClients();
+  delay(300);
+}
