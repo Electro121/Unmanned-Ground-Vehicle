@@ -20,8 +20,8 @@ String incoMessage;
 String command;
 String speed;
 
-const char* ssid = "Eternity";
-const char* password = "MaxMaster@#11";
+const char* ssid = "routers ssid";
+const char* password = "password";
 
 unsigned long lastTime = 0;
 unsigned long timerDelay = 1500;
